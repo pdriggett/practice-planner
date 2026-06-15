@@ -12,7 +12,7 @@ Each week is a single markdown note in your vault containing:
 
 - **Folder** — where weekly notes are stored (default: `Practice`).
 - **Week starts on** — first day of the practice week. Weeks that cross into a new year are stored under the year they started.
-- **Default skills** — rows used in each new week's skill table.
+- **Default skills** — rows used in each new week's skill table. Each skill is an editable row: rename it inline, remove it with the trash button, **Add skill** to append a new one, or **Reset to default** to restore the built-in set (Scales, Technique, Repertoire, Sight Reading).
 
 ## Commands
 

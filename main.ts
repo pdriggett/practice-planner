@@ -176,7 +176,8 @@ function renderTemplate(
 
 	const headerCols = days.map((d) => DAY_SHORT[d]).join(" | ");
 	const sepCols = days.map(() => "---").join(" | ");
-	const skillRows = (skills.length ? skills : ["(skill)"])
+	const cleanSkills = skills.map((s) => s.trim()).filter(Boolean);
+	const skillRows = (cleanSkills.length ? cleanSkills : ["(skill)"])
 		.map((s) => `| ${s} | ${days.map(() => " ").join(" | ")} |`)
 		.join("\n");
 
@@ -251,21 +252,55 @@ class PracticePlannerSettingTab extends PluginSettingTab {
 				});
 			});
 
+		this.renderSkills(containerEl);
+	}
+
+	private renderSkills(containerEl: HTMLElement): void {
 		new Setting(containerEl)
 			.setName("Default skills")
-			.setDesc("One skill per line. Used as rows in each new week's skill table.")
-			.addTextArea((ta) => {
-				ta.setPlaceholder("Scales\nTechnique\nRepertoire\nSight Reading");
-				ta.setValue(this.plugin.settings.skills.join("\n"));
-				ta.onChange(async (value) => {
-					this.plugin.settings.skills = value
-						.split("\n")
-						.map((s) => s.trim())
-						.filter(Boolean);
-					await this.plugin.saveSettings();
-				});
-				ta.inputEl.rows = 6;
-				ta.inputEl.cols = 30;
+			.setDesc("Rows used in each new week's skill table. Edit a name inline, remove a skill, add new ones, or reset to the built-in defaults.")
+			.setHeading();
+
+		this.plugin.settings.skills.forEach((skill, index) => {
+			new Setting(containerEl).addText((text) => {
+				text
+					.setPlaceholder("Skill name")
+					.setValue(skill)
+					.onChange(async (value) => {
+						this.plugin.settings.skills[index] = value.trim();
+						await this.plugin.saveSettings();
+					});
+			}).addExtraButton((btn) => {
+				btn
+					.setIcon("trash")
+					.setTooltip("Remove skill")
+					.onClick(async () => {
+						this.plugin.settings.skills.splice(index, 1);
+						await this.plugin.saveSettings();
+						this.display();
+					});
+			});
+		});
+
+		new Setting(containerEl)
+			.addButton((btn) => {
+				btn
+					.setButtonText("Add skill")
+					.onClick(async () => {
+						this.plugin.settings.skills.push("");
+						await this.plugin.saveSettings();
+						this.display();
+					});
+			})
+			.addButton((btn) => {
+				btn
+					.setButtonText("Reset to default")
+					.setCta()
+					.onClick(async () => {
+						this.plugin.settings.skills = [...DEFAULT_SETTINGS.skills];
+						await this.plugin.saveSettings();
+						this.display();
+					});
 			});
 	}
 }
