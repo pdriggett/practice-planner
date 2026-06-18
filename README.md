@@ -6,7 +6,23 @@ Each week is a single markdown note in your vault containing:
 
 - **Goals** for the week
 - A **skills × days** tracking table
-- **Daily notes** sections, one per day
+- **Daily notes** sections, one per day — each seeded with a practice **Session**
+  carrying [Dataview](https://github.com/blacksmithgu/obsidian-dataview) inline
+  fields: `skill::`, `minutes::`, and `notes::`. Duplicate the Session
+  bullet to log multiple sessions in a day. The day's date is in its heading
+  (`### Monday — 2026-06-15`), so a future Dataview query or heat-map can read each
+  session's date, skill, and minutes without any hidden metadata.
+
+  Example day:
+
+  ```
+  ### Monday — 2026-06-15
+
+  - **Session 1**
+      - skill::
+      - minutes::
+      - notes::
+  ```
 
 ## Settings
 

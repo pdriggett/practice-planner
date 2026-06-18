@@ -183,8 +183,14 @@ function renderTemplate(
 
 	const dailySections = days
 		.map((d, i) => {
-			const date = addDays(weekStart, i);
-			return `### ${DAY_NAMES[d]} — ${formatISO(date)}\n- \n`;
+			const date = formatISO(addDays(weekStart, i));
+			return `### ${DAY_NAMES[d]} — ${date}
+
+- **Session 1**
+    - skill::
+    - minutes::
+    - notes::
+`;
 		})
 		.join("\n");
 
