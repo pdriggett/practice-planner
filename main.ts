@@ -62,7 +62,9 @@ export default class PracticePlannerPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		const data =
+			(await this.loadData()) as Partial<PracticePlannerSettings> | null;
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
 	}
 
 	async saveSettings() {
@@ -238,9 +240,9 @@ class PracticePlannerSettingTab extends PluginSettingTab {
 				text
 					.setPlaceholder("Practice")
 					.setValue(this.plugin.settings.folderPath)
-					.onChange(async (value) => {
+					.onChange((value) => {
 						this.plugin.settings.folderPath = value || "Practice";
-						await this.plugin.saveSettings();
+						void this.plugin.saveSettings();
 					}),
 			);
 
@@ -250,18 +252,22 @@ class PracticePlannerSettingTab extends PluginSettingTab {
 				"First day of the practice week. Weeks that cross into a new year are stored under the year they started.",
 			)
 			.addDropdown((dd) => {
-				DAY_NAMES.forEach((name, i) => dd.addOption(String(i), name));
+				DAY_NAMES.forEach((name, i) => {
+					dd.addOption(String(i), name);
+				});
 				dd.setValue(String(this.plugin.settings.weekStartDay));
-				dd.onChange(async (value) => {
+				dd.onChange((value) => {
 					this.plugin.settings.weekStartDay = Number(value) as DayIndex;
-					await this.plugin.saveSettings();
+					void this.plugin.saveSettings();
 				});
 			});
 
-		this.renderSkills(containerEl);
+		this.renderSkills(containerEl.createDiv());
 	}
 
 	private renderSkills(containerEl: HTMLElement): void {
+		containerEl.empty();
+
 		new Setting(containerEl)
 			.setName("Default skills")
 			.setDesc("Rows used in each new week's skill table. Edit a name inline, remove a skill, add new ones, or reset to the built-in defaults.")
@@ -272,18 +278,18 @@ class PracticePlannerSettingTab extends PluginSettingTab {
 				text
 					.setPlaceholder("Skill name")
 					.setValue(skill)
-					.onChange(async (value) => {
+					.onChange((value) => {
 						this.plugin.settings.skills[index] = value.trim();
-						await this.plugin.saveSettings();
+						void this.plugin.saveSettings();
 					});
 			}).addExtraButton((btn) => {
 				btn
 					.setIcon("trash")
 					.setTooltip("Remove skill")
-					.onClick(async () => {
+					.onClick(() => {
 						this.plugin.settings.skills.splice(index, 1);
-						await this.plugin.saveSettings();
-						this.display();
+						void this.plugin.saveSettings();
+						this.renderSkills(containerEl);
 					});
 			});
 		});
@@ -292,20 +298,20 @@ class PracticePlannerSettingTab extends PluginSettingTab {
 			.addButton((btn) => {
 				btn
 					.setButtonText("Add skill")
-					.onClick(async () => {
+					.onClick(() => {
 						this.plugin.settings.skills.push("");
-						await this.plugin.saveSettings();
-						this.display();
+						void this.plugin.saveSettings();
+						this.renderSkills(containerEl);
 					});
 			})
 			.addButton((btn) => {
 				btn
 					.setButtonText("Reset to default")
 					.setCta()
-					.onClick(async () => {
+					.onClick(() => {
 						this.plugin.settings.skills = [...DEFAULT_SETTINGS.skills];
-						await this.plugin.saveSettings();
-						this.display();
+						void this.plugin.saveSettings();
+						this.renderSkills(containerEl);
 					});
 			});
 	}
