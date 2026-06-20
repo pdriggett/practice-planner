@@ -1,7 +1,7 @@
 {
 	"id": "practice-planner",
 	"name": "Weekly Music Practice Planner",
-	"version": "0.1.2",
+	"version": "0.1.3",
 	"minAppVersion": "1.4.0",
 	"description": "Plan and track weekly music practice: per-skill progress by day, plus per-day notes.",
 	"author": "Patrick Driggett",
