@@ -1,5 +1,10 @@
 import {
 	App,
+	Editor,
+	EditorPosition,
+	EditorSuggest,
+	EditorSuggestContext,
+	EditorSuggestTriggerInfo,
 	Notice,
 	Plugin,
 	PluginSettingTab,
@@ -14,12 +19,14 @@ interface PracticePlannerSettings {
 	folderPath: string;
 	weekStartDay: DayIndex;
 	skills: string[];
+	skillHistory: string[];
 }
 
 const DEFAULT_SETTINGS: PracticePlannerSettings = {
 	folderPath: "Practice",
 	weekStartDay: 1,
 	skills: ["Scales", "Technique", "Repertoire", "Sight Reading"],
+	skillHistory: [],
 };
 
 const DAY_NAMES = [
@@ -40,6 +47,10 @@ export default class PracticePlannerPlugin extends Plugin {
 	async onload() {
 		await this.loadSettings();
 
+		// Seed history from the currently active skills so existing setups
+		// immediately have something to autocomplete.
+		this.recordSkills(this.settings.skills);
+
 		this.addCommand({
 			id: "open-this-week",
 			name: "Open this week's practice plan",
@@ -58,7 +69,38 @@ export default class PracticePlannerPlugin extends Plugin {
 			callback: () => this.openWeek(-1),
 		});
 
+		this.addCommand({
+			id: "rebuild-skill-history",
+			name: "Rebuild skill history from notes",
+			callback: async () => {
+				const found = await this.scanVaultForSkills();
+				new Notice(
+					`Practice Planner: scanned notes and found ${found} skill${found === 1 ? "" : "s"}.`,
+				);
+			},
+		});
+
+		this.registerEditorSuggest(new SkillSuggest(this));
+
 		this.addSettingTab(new PracticePlannerSettingTab(this.app, this));
+
+		// Capture skills typed inline (even brand-new ones never picked from the
+		// dropdown) into history. `modify` fires when the editor flushes to disk
+		// — debounced after a pause / blur / note switch — not per keystroke.
+		this.registerEvent(
+			this.app.vault.on("modify", (file) => {
+				if (file instanceof TFile && this.isPracticeNote(file)) {
+					void this.extractSkills(file).then((skills) =>
+						this.recordSkills(skills),
+					);
+				}
+			}),
+		);
+
+		// Pick up skills used in existing notes once the vault is ready.
+		this.app.workspace.onLayoutReady(() => {
+			void this.scanVaultForSkills();
+		});
 	}
 
 	async loadSettings() {
@@ -69,6 +111,93 @@ export default class PracticePlannerPlugin extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+	}
+
+	/**
+	 * Merge the given skill names into the persistent history. History entries
+	 * are never auto-removed and are de-duped case-insensitively, preserving
+	 * the first-seen casing. Saves only when something new was added.
+	 */
+	recordSkills(names: string[]): void {
+		const seen = new Set(
+			this.settings.skillHistory.map((s) => s.toLowerCase()),
+		);
+		let changed = false;
+		for (const raw of names) {
+			const name = raw.trim();
+			if (!name) continue;
+			const key = name.toLowerCase();
+			if (seen.has(key)) continue;
+			seen.add(key);
+			this.settings.skillHistory.push(name);
+			changed = true;
+		}
+		if (changed) {
+			void this.saveSettings();
+		}
+	}
+
+	/**
+	 * Union of active skills and history, de-duped case-insensitively and
+	 * sorted. This is the source list for the `skill::` autocomplete.
+	 */
+	knownSkills(): string[] {
+		const seen = new Set<string>();
+		const out: string[] = [];
+		for (const raw of [...this.settings.skills, ...this.settings.skillHistory]) {
+			const name = raw.trim();
+			if (!name) continue;
+			const key = name.toLowerCase();
+			if (seen.has(key)) continue;
+			seen.add(key);
+			out.push(name);
+		}
+		out.sort((a, b) => a.localeCompare(b));
+		return out;
+	}
+
+	/** True if the file is a markdown note under the configured practice folder. */
+	isPracticeNote(file: TFile): boolean {
+		if (file.extension !== "md") return false;
+		const folder = this.settings.folderPath.replace(/^\/+|\/+$/g, "");
+		const prefix = folder ? `${folder}/` : "";
+		return !prefix || file.path.startsWith(prefix);
+	}
+
+	/** Extract distinct `skill::` inline field values from a single note. */
+	async extractSkills(file: TFile): Promise<string[]> {
+		const content = await this.app.vault.cachedRead(file);
+		const found = new Set<string>();
+		// `[ \t]*` (not `\s*`) so an empty `skill::` line never swallows the
+		// following `minutes::` line.
+		const re = /skill::[ \t]*([^\n]+)/gi;
+		let match: RegExpExecArray | null;
+		while ((match = re.exec(content)) !== null) {
+			const value = match[1].trim();
+			if (value) found.add(value);
+		}
+		return [...found];
+	}
+
+	/**
+	 * Scan markdown notes under the configured folder for `skill::` inline
+	 * field values and merge them into history. Returns the count of distinct
+	 * skill values encountered across the scanned notes.
+	 */
+	async scanVaultForSkills(): Promise<number> {
+		const files = this.app.vault
+			.getMarkdownFiles()
+			.filter((f) => this.isPracticeNote(f));
+
+		const found = new Set<string>();
+		for (const file of files) {
+			for (const skill of await this.extractSkills(file)) {
+				found.add(skill);
+			}
+		}
+
+		this.recordSkills([...found]);
+		return found.size;
 	}
 
 	async openWeek(weekOffset: number) {
@@ -223,10 +352,15 @@ ${dailySections}`;
 
 class PracticePlannerSettingTab extends PluginSettingTab {
 	plugin: PracticePlannerPlugin;
+	private historyEl: HTMLElement | null = null;
 
 	constructor(app: App, plugin: PracticePlannerPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
+	}
+
+	private refreshHistory(): void {
+		if (this.historyEl) this.renderHistory(this.historyEl);
 	}
 
 	display(): void {
@@ -263,6 +397,8 @@ class PracticePlannerSettingTab extends PluginSettingTab {
 			});
 
 		this.renderSkills(containerEl.createDiv());
+		this.historyEl = containerEl.createDiv();
+		this.renderHistory(this.historyEl);
 	}
 
 	private renderSkills(containerEl: HTMLElement): void {
@@ -282,6 +418,12 @@ class PracticePlannerSettingTab extends PluginSettingTab {
 						this.plugin.settings.skills[index] = value.trim();
 						void this.plugin.saveSettings();
 					});
+				// Record the finished name (not every keystroke) when the
+				// field loses focus, then refresh the history list.
+				text.inputEl.addEventListener("blur", () => {
+					this.plugin.recordSkills([this.plugin.settings.skills[index]]);
+					this.refreshHistory();
+				});
 			}).addExtraButton((btn) => {
 				btn
 					.setIcon("trash")
@@ -290,6 +432,7 @@ class PracticePlannerSettingTab extends PluginSettingTab {
 						this.plugin.settings.skills.splice(index, 1);
 						void this.plugin.saveSettings();
 						this.renderSkills(containerEl);
+						this.refreshHistory();
 					});
 			});
 		});
@@ -310,9 +453,126 @@ class PracticePlannerSettingTab extends PluginSettingTab {
 					.setCta()
 					.onClick(() => {
 						this.plugin.settings.skills = [...DEFAULT_SETTINGS.skills];
+						this.plugin.recordSkills(this.plugin.settings.skills);
 						void this.plugin.saveSettings();
 						this.renderSkills(containerEl);
+						this.refreshHistory();
 					});
 			});
+	}
+
+	private renderHistory(containerEl: HTMLElement): void {
+		containerEl.empty();
+
+		const active = new Set(
+			this.plugin.settings.skills.map((s) => s.trim().toLowerCase()),
+		);
+		const history = [...this.plugin.settings.skillHistory].sort((a, b) =>
+			a.localeCompare(b),
+		);
+
+		new Setting(containerEl)
+			.setName("Skill history")
+			.setDesc(
+				"Every skill ever used, including ones removed from the list above. These power the skill:: autocomplete in your notes.",
+			)
+			.setHeading();
+
+		if (history.length === 0) {
+			containerEl.createEl("p", {
+				text: "No skills recorded yet.",
+				cls: "setting-item-description",
+			});
+		} else {
+			for (const name of history) {
+				const isActive = active.has(name.trim().toLowerCase());
+				const row = new Setting(containerEl).setName(
+					isActive ? `${name} (active)` : name,
+				);
+				row.addExtraButton((btn) => {
+					btn
+						.setIcon("trash")
+						.setTooltip(
+							isActive
+								? "Remove from history (still in the list above)"
+								: "Remove from history",
+						)
+						.onClick(() => {
+							this.plugin.settings.skillHistory =
+								this.plugin.settings.skillHistory.filter(
+									(s) => s !== name,
+								);
+							void this.plugin.saveSettings();
+							this.renderHistory(containerEl);
+						});
+				});
+			}
+		}
+
+		new Setting(containerEl).addButton((btn) => {
+			btn
+				.setButtonText("Clear history")
+				.setWarning()
+				.onClick(() => {
+					// Keep the active skills so autocomplete still works.
+					this.plugin.settings.skillHistory = [
+						...this.plugin.settings.skills,
+					]
+						.map((s) => s.trim())
+						.filter(Boolean);
+					void this.plugin.saveSettings();
+					this.renderHistory(containerEl);
+				});
+		});
+	}
+}
+
+class SkillSuggest extends EditorSuggest<string> {
+	plugin: PracticePlannerPlugin;
+
+	constructor(plugin: PracticePlannerPlugin) {
+		super(plugin.app);
+		this.plugin = plugin;
+	}
+
+	onTrigger(
+		cursor: EditorPosition,
+		editor: Editor,
+	): EditorSuggestTriggerInfo | null {
+		const line = editor.getLine(cursor.line).slice(0, cursor.ch);
+		const match = line.match(/skill::[ \t]*(.*)$/i);
+		if (!match) return null;
+
+		const query = match[1];
+		// Column where the value begins (just after `skill::` and any spaces).
+		const start = cursor.ch - query.length;
+		return {
+			start: { line: cursor.line, ch: start },
+			end: cursor,
+			query,
+		};
+	}
+
+	getSuggestions(context: EditorSuggestContext): string[] {
+		const query = context.query.trim().toLowerCase();
+		const skills = this.plugin.knownSkills();
+		if (!query) return skills;
+		return skills.filter((s) => s.toLowerCase().includes(query));
+	}
+
+	renderSuggestion(value: string, el: HTMLElement): void {
+		el.setText(value);
+	}
+
+	selectSuggestion(value: string): void {
+		const { context } = this;
+		if (!context) return;
+		context.editor.replaceRange(value, context.start, context.end);
+		const end: EditorPosition = {
+			line: context.start.line,
+			ch: context.start.ch + value.length,
+		};
+		context.editor.setCursor(end);
+		this.plugin.recordSkills([value]);
 	}
 }
